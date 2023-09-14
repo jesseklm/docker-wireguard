@@ -69,8 +69,8 @@ DUDE"
         cat <<DUDE >> /config/wg0.conf
 [Peer]
 # friendly_name = ${PEER_NAME}
-PublicKey = $(cat /config/${PEER_ID}/publickey-${PEER_ID})
-PresharedKey = $(cat /config/${PEER_ID}/presharedkey-${PEER_ID})
+PublicKey = $(cat "/config/${PEER_ID}/publickey-${PEER_ID}")
+PresharedKey = $(cat "/config/${PEER_ID}/presharedkey-${PEER_ID}")
 DUDE
       else
         echo "**** Existing keys with no preshared key found for ${PEER_ID}, creating confs without preshared key for backwards compatibility ****"
