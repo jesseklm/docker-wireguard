@@ -55,7 +55,7 @@ The architectures supported by this image are:
 | :----: | :----: | ---- |
 | x86-64 | ✅ | amd64-\<version tag\> |
 | arm64 | ✅ | arm64v8-\<version tag\> |
-| armhf| ✅ | arm32v7-\<version tag\> |
+| armhf | ❌ | |
 
 ## Version Tags
 
@@ -63,25 +63,23 @@ This image provides various versions that are available via tags. Please read th
 
 | Tag | Available | Description |
 | :----: | :----: |--- |
-| latest | ✅ | Stable releases with support for compiling Wireguard modules |
-| alpine | ✅ | Stable releases based on Alpine *without* support for compiling Wireguard modules |
-
+| latest | ✅ | Stable releases based on Alpine *without* support for compiling Wireguard modules. |
+| legacy | ✅ | Stable releases with support for compiling Wireguard modules for older kernels. |
 ## Application Setup
 
 During container start, it will first check if the wireguard module is already installed and loaded. Kernels newer than 5.6 generally have the wireguard module built-in (along with some older custom kernels). However, the module may not be enabled. Make sure it is enabled prior to starting the container.
 
-If the kernel is not built-in, or installed on host, the container will check if the kernel headers are present (in `/usr/src`) and if not, it will attempt to download the necessary kernel headers from the `ubuntu xenial/bionic`, `debian/raspbian buster` repos; then will attempt to compile and install the kernel module. If the kernel headers are not found in either `usr/src` or in the repos mentioned, container will sleep indefinitely as wireguard cannot be installed.
+This can be run as a server or a client, based on the parameters used.
 
-If you're on a debian/ubuntu based host with a custom or downstream distro provided kernel (ie. Pop!_OS), the container won't be able to install the kernel headers from the regular ubuntu and debian repos. In those cases, you can try installing the headers on the host via `sudo apt install linux-headers-$(uname -r)` (if distro version) and then add a volume mapping for `/usr/src:/usr/src`, or if custom built, map the location of the existing headers to allow the container to use host installed headers to build the kernel module (tested successful on Pop!_OS, ymmv).
+## Note on iptables
 
-With regards to arm32/64 devices, Raspberry Pi 2-4 running the [official ubuntu images](https://ubuntu.com/download/raspberry-pi) or Raspbian Buster are supported out of the box. For all other devices and OSes, you can try installing the kernel headers on the host, and mapping `/usr/src:/usr/src` and it may just work (no guarantees).
-
-This can be run as a server or a client, based on the parameters used. 
+Some hosts may not load the iptables kernel modules by default. In order for the container to be able to load them, you need to assign the `SYS_MODULE` capability and add the optional `/lib/modules` volume mount. Alternatively you can `modprobe` them from the host before starting the container.
 
 ## Server Mode
-If the environment variable `PEERS` is set to a number or a list of strings separated by comma, the container will run in server mode and the necessary server and peer/client confs will be generated. The peer/client config qr codes will be output in the docker log. They will also be saved in text and png format under `/config/peerX` in case `PEERS` is a variable and an integer or `/config/peer_X` in case a list of names was provided instead of an integer.
 
-Variables `SERVERURL`, `SERVERPORT`, `INTERNAL_SUBNET` and `PEERDNS` are optional variables used for server mode. Any changes to these environment variables will trigger regeneration of server and peer confs. Peer/client confs will be recreated with existing private/public keys. Delete the peer folders for the keys to be recreated along with the confs.
+If the environment variable `PEERS` is set to a number or a list of strings separated by comma, the container will run in server mode and the necessary server and peer/client confs will be generated. The peer/client config qr codes will be output in the docker log if `LOG_CONFS` is set to `true`. They will also be saved in text and png format under `/config/peerX` in case `PEERS` is a variable and an integer or `/config/peer_X` in case a list of names was provided instead of an integer.
+
+Variables `SERVERURL`, `SERVERPORT`, `INTERNAL_SUBNET`, `PEERDNS`, `INTERFACE`, `ALLOWEDIPS` and `PERSISTENTKEEPALIVE_PEERS` are optional variables used for server mode. Any changes to these environment variables will trigger regeneration of server and peer confs. Peer/client confs will be recreated with existing private/public keys. Delete the peer folders for the keys to be recreated along with the confs.
 
 To add more peers/clients later on, you increment the `PEERS` environment variable or add more elements to the list and recreate the container.
 
@@ -90,11 +88,13 @@ To display the QR codes of active peers again, you can use the following command
 The templates used for server and peer confs are saved under `/config/templates`. Advanced users can modify these templates and force conf generation by deleting `/config/wg0.conf` and restarting the container.
 
 ## Client Mode
-Do not set the `PEERS` environment variable. Drop your client conf into the config folder as `/config/wg0.conf` and start the container. 
+
+Do not set the `PEERS` environment variable. Drop your client conf into the config folder as `/config/wg0.conf` and start the container.
 
 If you get IPv6 related errors in the log and connection cannot be established, edit the `AllowedIPs` line in your peer/client wg0.conf to include only `0.0.0.0/0` and not `::/0`; and restart the container.
 
 ## Road warriors, roaming and returning home
+
 If you plan to use Wireguard both remotely and locally, say on your mobile phone, you will need to consider routing. Most firewalls will not route ports forwarded on your WAN interface correctly to the LAN out of the box. This means that when you return home, even though you can see the Wireguard server, the return packets will probably get lost.
 
 This is not a Wireguard specific issue and the two generally accepted solutions are NAT reflection (setting your edge router/firewall up in such a way as it translates internal packets correctly) or split horizon DNS (setting your internal DNS to return the private rather than public IP when connecting locally).
@@ -107,7 +107,7 @@ Both of these approaches have positives and negatives however their setup is out
 
 When routing via Wireguard from another container using the `service` option in docker, you might lose access to the containers webUI locally. To avoid this, exclude the docker subnet from being routed via Wireguard by modifying your `wg0.conf` like so (modifying the subnets as you require):
 
-  ```
+  ```ini
   [Interface]
   PrivateKey = <private key>
   Address = 9.8.7.6/32
@@ -145,21 +145,22 @@ services:
     container_name: wireguard
     cap_add:
       - NET_ADMIN
-      - SYS_MODULE
+      - SYS_MODULE #optional
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=Europe/London
+      - TZ=Etc/UTC
       - SERVERURL=wireguard.domain.com #optional
       - SERVERPORT=51820 #optional
       - PEERS=1 #optional
       - PEERDNS=auto #optional
       - INTERNAL_SUBNET=10.13.13.0 #optional
       - ALLOWEDIPS=0.0.0.0/0 #optional
+      - PERSISTENTKEEPALIVE_PEERS= #optional
       - LOG_CONFS=true #optional
     volumes:
       - /path/to/appdata/config:/config
-      - /lib/modules:/lib/modules
+      - /lib/modules:/lib/modules #optional
     ports:
       - 51820:51820/udp
     sysctls:
@@ -173,23 +174,25 @@ services:
 docker run -d \
   --name=wireguard \
   --cap-add=NET_ADMIN \
-  --cap-add=SYS_MODULE \
+  --cap-add=SYS_MODULE `#optional` \
   -e PUID=1000 \
   -e PGID=1000 \
-  -e TZ=Europe/London \
+  -e TZ=Etc/UTC \
   -e SERVERURL=wireguard.domain.com `#optional` \
   -e SERVERPORT=51820 `#optional` \
   -e PEERS=1 `#optional` \
   -e PEERDNS=auto `#optional` \
   -e INTERNAL_SUBNET=10.13.13.0 `#optional` \
   -e ALLOWEDIPS=0.0.0.0/0 `#optional` \
+  -e PERSISTENTKEEPALIVE_PEERS= `#optional` \
   -e LOG_CONFS=true `#optional` \
   -p 51820:51820/udp \
   -v /path/to/appdata/config:/config \
-  -v /lib/modules:/lib/modules \
+  -v /lib/modules:/lib/modules `#optional` \
   --sysctl="net.ipv4.conf.all.src_valid_mark=1" \
   --restart unless-stopped \
   lscr.io/linuxserver/wireguard:latest
+
 ```
 
 ## Parameters
@@ -201,16 +204,17 @@ Container images are configured using parameters passed at runtime (such as thos
 | `-p 51820/udp` | wireguard port |
 | `-e PUID=1000` | for UserID - see below for explanation |
 | `-e PGID=1000` | for GroupID - see below for explanation |
-| `-e TZ=Europe/London` | Specify a timezone to use EG Europe/London |
+| `-e TZ=Etc/UTC` | specify a timezone to use, see this [list](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List). |
 | `-e SERVERURL=wireguard.domain.com` | External IP or domain name for docker host. Used in server mode. If set to `auto`, the container will try to determine and set the external IP automatically |
 | `-e SERVERPORT=51820` | External port for docker host. Used in server mode. |
 | `-e PEERS=1` | Number of peers to create confs for. Required for server mode. Can also be a list of names: `myPC,myPhone,myTablet` (alphanumeric only) |
 | `-e PEERDNS=auto` | DNS server set in peer/client configs (can be set as `8.8.8.8`). Used in server mode. Defaults to `auto`, which uses wireguard docker host's DNS via included CoreDNS forward. |
 | `-e INTERNAL_SUBNET=10.13.13.0` | Internal subnet for the wireguard and server and peers (only change if it clashes). Used in server mode. |
 | `-e ALLOWEDIPS=0.0.0.0/0` | The IPs/Ranges that the peers will be able to reach using the VPN connection. If not specified the default value is: '0.0.0.0/0, ::0/0' This will cause ALL traffic to route through the VPN, if you want split tunneling, set this to only the IPs you would like to use the tunnel AND the ip of the server's WG ip, such as 10.13.13.1. |
+| `-e PERSISTENTKEEPALIVE_PEERS=` | Set to `all` or a list of comma separated peers (ie. `1,4,laptop`) for the wireguard server to send keepalive packets to listed peers every 25 seconds. Useful if server is accessed via domain name and has dynamic IP. Used only in server mode. |
 | `-e LOG_CONFS=true` | Generated QR codes will be displayed in the docker log. Set to `false` to skip log output. |
 | `-v /config` | Contains all relevant configuration files. |
-| `-v /lib/modules` | Maps host's modules folder. |
+| `-v /lib/modules` | Host kernel modules for situations where they're not already loaded. |
 | `--sysctl=` | Required for client mode. |
 
 ### Portainer notice
@@ -326,8 +330,14 @@ Once registered you can define the dockerfile to use with `-f Dockerfile.aarch64
 
 ## Versions
 
+* **28.06.23:** - Rebase master to Alpine 3.18 again.
+* **26.06.23:** - Revert master to Alpine 3.17, due to issue with openresolv.
+* **24.06.23:** - Rebase master to Alpine 3.18, deprecate armhf as per [https://www.linuxserver.io/armhf](https://www.linuxserver.io/armhf).
+* **26.04.23:** - Rework branches. Swap alpine and ubuntu builds.
+* **29.01.23:** - Rebase to alpine 3.17.
+* **10.01.23:** - Add new var to add `PersistentKeepalive` to server config for select peers to survive server IP changes when domain name is used.
+* **26.10.22:** - Better handle unsupported peer names. Improve logging.
 * **12.10.22:** - Add Alpine branch. Optimize wg and coredns services.
-* **09.10.22:** - Switch back to iptables-legacy due to issues on some hosts.
 * **04.10.22:** - Rebase to Jammy. Upgrade to s6v3.
 * **16.05.22:** - Improve NAT handling in server mode when multiple ethernet devices are present.
 * **23.04.22:** - Add pre-shared key support. Automatically added to all new peer confs generated, existing ones are left without to ensure no breaking changes.
